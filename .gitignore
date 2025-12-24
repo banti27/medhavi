@@ -1,0 +1,17 @@
+.idea/
+*.iml
+target/
+build/
+.gradle/
+*.class
+*.log
+*.jar
+!gradle-wrapper.jar
+.DS_Store
+*.swp
+*.swo
+*~
+.vscode/
+*.bak
+bin/
+out/

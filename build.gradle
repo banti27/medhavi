@@ -1,0 +1,98 @@
+plugins {
+    id 'java'
+    id 'application'
+    // Shadow plugin commented out for faster builds
+    // Uncomment to create fat JARs: id 'com.github.johnrengelman.shadow' version '8.1.1'
+}
+
+group = 'com.medhavi'
+version = '1.0-SNAPSHOT'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+application {
+    mainClass = 'com.medhavi.qa.TextQAApplication'
+}
+
+repositories {
+    mavenCentral()
+}
+
+ext {
+    dl4jVersion = '1.0.0-M2.1'
+    nd4jBackend = 'nd4j-native-platform'
+    commonsIoVersion = '2.15.1'
+    slf4jVersion = '2.0.9'
+    junitVersion = '5.10.1'
+    apachePdfBoxVersion = '2.0.24'
+}
+
+dependencies {
+    // DeepLearning4j Core
+    implementation "org.deeplearning4j:deeplearning4j-core:${dl4jVersion}"
+    
+    // ND4J Native Backend (CPU)
+    implementation "org.nd4j:${nd4jBackend}:${dl4jVersion}"
+    
+    // DeepLearning4j NLP
+    implementation "org.deeplearning4j:deeplearning4j-nlp:${dl4jVersion}"
+    
+    // Apache Commons IO for file operations
+    implementation "commons-io:commons-io:${commonsIoVersion}"
+
+    // Apache PDFBox for PDF document handling
+    implementation "org.apache.pdfbox:pdfbox:${apachePdfBoxVersion}"
+
+    // SLF4J Logging
+    implementation "org.slf4j:slf4j-api:${slf4jVersion}"
+    implementation "org.slf4j:slf4j-simple:${slf4jVersion}"
+
+    // JUnit for testing
+    testImplementation "org.junit.jupiter:junit-jupiter:${junitVersion}"
+    testRuntimeOnly "org.junit.platform:junit-platform-launcher"
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
+
+// Configure the JAR with manifest
+jar {
+    manifest {
+        attributes 'Main-Class': 'com.medhavi.qa.TextQAApplication'
+    }
+}
+
+// ShadowJar configuration (only active if plugin is enabled above)
+// shadowJar {
+//     archiveBaseName.set('text-qa-system')
+//     archiveClassifier.set('all')
+//     archiveVersion.set('1.0-SNAPSHOT')
+//     
+//     manifest {
+//         attributes 'Main-Class': 'com.medhavi.qa.TextQAApplication'
+//     }
+//     
+// Custom task to run the application with a file path argument
+task runApp(type: JavaExec) {
+    group = 'application'
+    description = 'Run the Text QA Application with a file path'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.medhavi.qa.TextQAApplicationRunner'
+    standardInput = System.in
+    
+    // Get file path from command line arguments
+    if (project.hasProperty('args')) {
+        args = project.args.split('\\s+')
+    }
+}
+
+// Disable slow distribution tasks
+startScripts.enabled = false
+distZip.enabled = false
+distTar.enabled = false
+
