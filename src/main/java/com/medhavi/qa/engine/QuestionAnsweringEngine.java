@@ -2,6 +2,7 @@ package com.medhavi.qa.engine;
 
 import java.io.File;
 import java.util.HashMap;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -58,6 +59,13 @@ public final class QuestionAnsweringEngine {
      * but it will be marked as low confidence.
      */
     private static final double CONFIDENT_SCORE_THRESHOLD = 0.10;
+
+    /**
+     * Defaults for chunked retrieval (used for LLM/RAG).
+     */
+    private static final int DEFAULT_CHUNK_WORDS = 220;
+    private static final int DEFAULT_CHUNK_OVERLAP_WORDS = 60;
+    private static final int DEFAULT_TOP_K_CHUNKS = 5;
 
     /**
      * Private constructor - use Builder to create instances.
@@ -172,6 +180,53 @@ public final class QuestionAnsweringEngine {
     }
 
     /**
+     * Retrieves top-K relevant chunks and asks the provided LLM to answer using those chunks.
+     *
+     * Contract:
+     * - Returns a plain-text answer from the LLM.
+     * - If no chunks are found, returns a friendly message (and does not call the LLM).
+     */
+    public String answerQuestionWithLLM(String question, com.medhavi.qa.llm.LLMClient llmClient) {
+        if (llmClient == null) {
+            throw new IllegalArgumentException("llmClient cannot be null");
+        }
+
+        if (sentences == null || sentences.isEmpty()) {
+            return "No document has been processed yet.";
+        }
+
+        if (question == null || question.trim().isEmpty()) {
+            log.warn("Empty question received");
+            return "Please ask a valid question.";
+        }
+
+        List<ScoredChunk> chunks = findTopRelevantChunks(
+                question,
+                DEFAULT_CHUNK_WORDS,
+                DEFAULT_CHUNK_OVERLAP_WORDS,
+                DEFAULT_TOP_K_CHUNKS);
+
+        if (chunks.isEmpty()) {
+            return "I couldn't find relevant context in the document.";
+        }
+
+        List<String> context = chunks.stream().map(c -> c.text).toList();
+        return llmClient.generateAnswer(question, context);
+    }
+
+    /**
+     * Builds overlapping chunks over the document sentence list and returns the top-K
+     * chunks by similarity score (Word2Vec + keyword overlap).
+     */
+    public List<String> retrieveTopChunks(String question, int topK) {
+        int k = Math.max(1, topK);
+        return findTopRelevantChunks(question, DEFAULT_CHUNK_WORDS, DEFAULT_CHUNK_OVERLAP_WORDS, k)
+                .stream()
+                .map(c -> c.text)
+                .toList();
+    }
+
+    /**
      * Save the trained Word2Vec model to a file.
      *
      * @param model     The Word2Vec model to save
@@ -233,6 +288,121 @@ public final class QuestionAnsweringEngine {
         }
 
         return new Candidate(bestSentence, maxScore);
+    }
+
+    private static final class ScoredChunk {
+        private final String text;
+        private final double score;
+
+        private ScoredChunk(String text, double score) {
+            this.text = text;
+            this.score = score;
+        }
+    }
+
+    private List<ScoredChunk> findTopRelevantChunks(String question, int chunkWords, int overlapWords, int topK) {
+        int wordsPerChunk = Math.max(50, chunkWords);
+        int overlap = Math.max(0, Math.min(overlapWords, wordsPerChunk - 1));
+        int k = Math.max(1, topK);
+
+        List<String> questionKeywords = textProcessor.extractKeywords(question.toLowerCase());
+
+        // Build chunks from sentences until we hit word budget.
+        List<String> chunks = new ArrayList<>();
+        List<Integer> chunkStartSentenceIdx = new ArrayList<>();
+
+        int start = 0;
+        while (start < sentences.size()) {
+            int end = start;
+            int wordCount = 0;
+            StringBuilder sb = new StringBuilder();
+
+            while (end < sentences.size()) {
+                String s = sentences.get(end);
+                int w = countWords(s);
+                if (wordCount > 0 && wordCount + w > wordsPerChunk) {
+                    break;
+                }
+                if (sb.length() > 0) {
+                    sb.append(' ');
+                }
+                sb.append(s);
+                wordCount += w;
+                end++;
+            }
+
+            String chunkText = sb.toString().trim();
+            if (!chunkText.isEmpty()) {
+                chunks.add(chunkText);
+                chunkStartSentenceIdx.add(start);
+            }
+
+            if (end <= start) {
+                // Safety to avoid infinite loops.
+                end = start + 1;
+            }
+
+            // Advance with overlap by approximating overlap in sentences.
+            // We do overlap in *words* in config, but overlap-by-sentences is good enough for now.
+            int stepSentences = Math.max(1, (end - start) / 2);
+            if (overlap > 0) {
+                // If we want more overlap, reduce the step.
+                stepSentences = Math.max(1, (int) Math.round((end - start) * 0.4));
+            }
+            start += stepSentences;
+        }
+
+        // Score chunks, keep top-K.
+        ScoredChunk[] top = new ScoredChunk[Math.min(k, Math.max(1, chunks.size()))];
+
+        for (String chunk : chunks) {
+            double score = calculateSimilarityScore(question, chunk, questionKeywords);
+            maybeInsertTopChunk(top, new ScoredChunk(chunk, score));
+        }
+
+        List<ScoredChunk> result = new ArrayList<>();
+        for (ScoredChunk c : top) {
+            if (c != null) {
+                result.add(c);
+            }
+        }
+
+        if (log.isDebugEnabled()) {
+            log.debug("Top {} chunks:", result.size());
+            for (int i = 0; i < result.size(); i++) {
+                ScoredChunk c = result.get(i);
+                log.debug("  #{} score={} chunk={}", i + 1, String.format("%.6f", c.score), abbreviate(c.text, 260));
+            }
+        }
+
+        return result;
+    }
+
+    private static void maybeInsertTopChunk(ScoredChunk[] top, ScoredChunk candidate) {
+        if (candidate == null || candidate.text == null) {
+            return;
+        }
+
+        for (int i = 0; i < top.length; i++) {
+            if (top[i] == null || candidate.score > top[i].score) {
+                for (int j = top.length - 1; j > i; j--) {
+                    top[j] = top[j - 1];
+                }
+                top[i] = candidate;
+                return;
+            }
+        }
+    }
+
+    private static int countWords(String s) {
+        if (s == null) {
+            return 0;
+        }
+        String trimmed = s.trim();
+        if (trimmed.isEmpty()) {
+            return 0;
+        }
+        return trimmed.split("\\s+").length;
     }
 
     private static void maybeInsertTop(Candidate[] top, Candidate candidate) {

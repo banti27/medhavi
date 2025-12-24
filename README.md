@@ -421,6 +421,41 @@ You can modify these in `QuestionAnsweringEngine.java` for different performance
 
 ## Troubleshooting
 
+### Using local LLM answers (Ollama)
+
+This project supports an optional local LLM mode (basic RAG): it retrieves the top document chunks and asks a local Ollama model to answer **using only that context**.
+
+**1) Install Ollama (macOS)**
+
+- Install from: https://ollama.com
+- Or via Homebrew (if you use it):
+
+```bash
+brew install ollama
+```
+
+**2) Start Ollama**
+
+```bash
+ollama serve
+```
+
+**3) Pull a model (example)**
+
+```bash
+ollama pull llama3.2:3b
+```
+
+**4) Run Medhavi in LLM mode**
+
+```bash
+export QA_MODE=llm
+export OLLAMA_MODEL=llama3.2:3b
+./run.sh
+```
+
+If `QA_MODE=llm` is set but Ollama isn’t running, the app will print a hint and automatically fall back to extractive answers.
+
 ### Out of Memory Error
 If you encounter memory issues with large documents:
 ```bash

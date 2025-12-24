@@ -10,6 +10,7 @@ import org.slf4j.LoggerFactory;
 import com.medhavi.qa.console.JLineConsole;
 import com.medhavi.qa.engine.QuestionAnsweringEngine;
 import com.medhavi.qa.file.FileFormatHandler;
+import com.medhavi.qa.llm.OllamaClient;
 import com.medhavi.qa.processor.TextProcessor;
 
 /**
@@ -209,7 +210,28 @@ public class TextQAApplication {
      */
     private static void processAndDisplayAnswer(JLineConsole console, QuestionAnsweringEngine qaEngine, String question) {
         try {
-            String answer = qaEngine.answerQuestion(question);
+            String mode = System.getenv().getOrDefault("QA_MODE", "extractive").trim().toLowerCase();
+
+            String answer;
+            if ("llm".equals(mode) || "rag".equals(mode)) {
+                String llmAnswer = qaEngine.answerQuestionWithLLM(question, OllamaClient.fromEnv());
+
+                // If Ollama isn't running/reachable, fall back to the extractive engine.
+                if (llmAnswer != null && llmAnswer.startsWith("LLM error:")) {
+                    console.println("(LLM mode requested but Ollama isn't reachable. Falling back to extractive answers.)");
+                    console.println("Tip: start Ollama and set OLLAMA_MODEL, then retry.");
+                    console.blankLine();
+                    answer = qaEngine.answerQuestion(question);
+                } else {
+                    answer = llmAnswer;
+                }
+            } else {
+                answer = qaEngine.answerQuestion(question);
+            }
+
+            if (answer == null) {
+                answer = "(no answer)";
+            }
 
             console.blankLine();
             console.println("Answer:");
