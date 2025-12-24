@@ -1,3 +1,119 @@
+# Medhavi QA System
+
+Medhavi is a Java 21 CLI application that answers questions about **TXT and PDF** documents.
+
+- **Default mode (extractive)**: Word2Vec + keyword overlap retrieval.
+- **Optional local LLM mode (RAG via Ollama)**: retrieves top chunks from the document, then asks a local LLM to answer **using only that context**.
+
+## Features
+
+- TXT + PDF input (PDF via PDFBox)
+- Interactive terminal UI (JLine)
+- Caches the trained Word2Vec model under `cache/trained/text/model.bin`
+- Optional Ollama integration behind an `LLMClient` interface (cloud-friendly later)
+
+## Requirements
+
+- Java **21**
+
+## Quick start
+
+### Build
+
+```bash
+./gradlew build
+```
+
+### Run (recommended)
+
+```bash
+./run.sh
+```
+
+`run.sh` uses `./gradlew run --console=plain` so Gradle’s progress UI doesn’t interfere with the JLine prompt.
+
+### Run (without script)
+
+```bash
+./gradlew run --console=plain
+```
+
+## Using the app
+
+1. Start the app.
+2. Enter a `.txt` or `.pdf` file path when prompted.
+3. Ask questions.
+4. Type `exit` or `quit` to end.
+
+## Answering modes
+
+### 1) Extractive mode (default)
+
+No config needed.
+
+### 2) Local LLM mode (Ollama RAG)
+
+Medhavi will retrieve top chunks and ask a local Ollama model.
+
+#### Install & run Ollama (macOS)
+
+- Install from https://ollama.com
+- Or with Homebrew:
+
+```bash
+brew install ollama
+```
+
+Start the service:
+
+```bash
+ollama serve
+```
+
+Pull a model:
+
+```bash
+ollama pull llama3.2:3b
+```
+
+Run Medhavi in LLM mode:
+
+```bash
+export QA_MODE=llm
+export OLLAMA_MODEL=llama3.2:3b
+./run.sh
+```
+
+Environment variables:
+
+- `QA_MODE`: `extractive` (default) | `llm` | `rag`
+- `OLLAMA_BASE_URL`: default `http://localhost:11434`
+- `OLLAMA_MODEL`: default `llama3.2:3b`
+
+If `QA_MODE=llm` is set but Ollama isn’t reachable, the app prints a hint and automatically falls back to extractive answers.
+
+## Troubleshooting
+
+### Build passes but runtime fails with ND4J native errors (macOS)
+
+ND4J uses native libraries; runtime behavior can depend on your CPU architecture and the available native binaries. If you hit native-load problems, capture the full stack trace and open an issue.
+
+### Memory issues on large PDFs
+
+```bash
+java -Xmx4g -jar build/libs/text-qa-system-1.0-SNAPSHOT.jar
+```
+
+## Project layout (high level)
+
+- `src/main/java/com/medhavi/qa/TextQAApplication.java` – interactive CLI
+- `src/main/java/com/medhavi/qa/console/JLineConsole.java` – terminal input/output wrapper
+- `src/main/java/com/medhavi/qa/engine/QuestionAnsweringEngine.java` – retrieval and chunking
+- `src/main/java/com/medhavi/qa/llm/*` – `LLMClient` + `OllamaClient`
+
+## License
+
+Educational use.
 # 📚 Medhavi QA System - Complete Setup Guide
 
 A Java 21 application that uses DeepLearning4j to answer questions about **TXT and PDF** documents using natural language processing and semantic similarity.
