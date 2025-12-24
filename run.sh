@@ -35,4 +35,6 @@ fi
 echo "🚀 Starting the Text QA System..."
 echo ""
 
-./gradlew runApp --no-daemon --console=plain
+# Use the interactive main (TextQAApplication) for the best CLI experience.
+# `--console=plain` disables Gradle's progress UI which can interfere with JLine.
+./gradlew run --no-daemon --console=plain

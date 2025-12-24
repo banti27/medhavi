@@ -1,8 +1,21 @@
 plugins {
     id 'java'
     id 'application'
-    // Shadow plugin commented out for faster builds
-    // Uncomment to create fat JARs: id 'com.github.johnrengelman.shadow' version '8.1.1'
+}
+
+application {
+    // Interactive CLI entrypoint
+    mainClass = 'com.medhavi.qa.TextQAApplication'
+}
+
+// Needed for interactive CLI input when running via Gradle
+tasks.named('run') {
+    standardInput = System.in
+}
+
+tasks.named('run') {
+    // This line is crucial for interactive applications; it connects the system input to the running task
+    standardInput = System.in
 }
 
 group = 'com.medhavi'
@@ -12,10 +25,6 @@ java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(21)
     }
-}
-
-application {
-    mainClass = 'com.medhavi.qa.TextQAApplication'
 }
 
 repositories {
@@ -29,6 +38,7 @@ ext {
     slf4jVersion = '2.0.9'
     junitVersion = '5.10.1'
     apachePdfBoxVersion = '2.0.24'
+    jlineVersion = '3.25.1'
 }
 
 dependencies {
@@ -37,6 +47,8 @@ dependencies {
     
     // ND4J Native Backend (CPU)
     implementation "org.nd4j:${nd4jBackend}:${dl4jVersion}"
+    implementation "org.nd4j:nd4j-native:${dl4jVersion}:macosx-arm64"
+    implementation "org.bytedeco:openblas:0.3.21-1.5.8:macosx-arm64"
     
     // DeepLearning4j NLP
     implementation "org.deeplearning4j:deeplearning4j-nlp:${dl4jVersion}"
@@ -50,6 +62,9 @@ dependencies {
     // SLF4J Logging
     implementation "org.slf4j:slf4j-api:${slf4jVersion}"
     implementation "org.slf4j:slf4j-simple:${slf4jVersion}"
+
+    // JLine 3 (interactive console: history, line editing, better terminal handling)
+    implementation "org.jline:jline:${jlineVersion}"
 
     // JUnit for testing
     testImplementation "org.junit.jupiter:junit-jupiter:${junitVersion}"
@@ -67,16 +82,8 @@ jar {
     }
 }
 
-// ShadowJar configuration (only active if plugin is enabled above)
-// shadowJar {
-//     archiveBaseName.set('text-qa-system')
-//     archiveClassifier.set('all')
-//     archiveVersion.set('1.0-SNAPSHOT')
-//     
-//     manifest {
-//         attributes 'Main-Class': 'com.medhavi.qa.TextQAApplication'
-//     }
-//     
+// ShadowJar config removed: shadow plugin is not applied in this build.
+
 // Custom task to run the application with a file path argument
 task runApp(type: JavaExec) {
     group = 'application'

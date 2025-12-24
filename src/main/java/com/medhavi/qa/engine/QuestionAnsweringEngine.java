@@ -47,6 +47,19 @@ public final class QuestionAnsweringEngine {
     private final Map<String, String> sentenceCache;
 
     /**
+     * How many top candidates to log for debugging.
+     */
+    private static final int DEBUG_TOP_K = 5;
+
+    /**
+     * Minimum score to consider an answer "confident".
+     *
+     * Note: The engine will still return the best match even below this threshold,
+     * but it will be marked as low confidence.
+     */
+    private static final double CONFIDENT_SCORE_THRESHOLD = 0.10;
+
+    /**
      * Private constructor - use Builder to create instances.
      * 
      * @param builder The builder with configuration
@@ -145,14 +158,17 @@ public final class QuestionAnsweringEngine {
             return "Please ask a valid question.";
         }
 
-        // Find the most relevant sentence using semantic similarity
-        String bestMatch = findMostRelevantSentence(question);
-
-        if (bestMatch != null) {
-            return bestMatch;
-        } else {
+        Candidate best = findMostRelevantSentence(question);
+        if (best == null || best.sentence == null || best.sentence.isBlank()) {
             return "I couldn't find a relevant answer in the document. Please try rephrasing your question.";
         }
+
+        // Always return the best sentence, but mark low-confidence matches.
+        if (best.score >= CONFIDENT_SCORE_THRESHOLD) {
+            return best.sentence;
+        }
+
+        return String.format("(low confidence, score=%.4f) %s", best.score, best.sentence);
     }
 
     /**
@@ -183,12 +199,14 @@ public final class QuestionAnsweringEngine {
      * @param question The question to match
      * @return The most relevant sentence
      */
-    private String findMostRelevantSentence(String question) {
+    private Candidate findMostRelevantSentence(String question) {
         double maxScore = -1.0;
         String bestSentence = null;
 
         // Extract keywords from question
         List<String> questionKeywords = textProcessor.extractKeywords(question.toLowerCase());
+
+        Candidate[] top = new Candidate[DEBUG_TOP_K];
 
         for (String sentence : sentences) {
             double score = calculateSimilarityScore(question, sentence, questionKeywords);
@@ -197,12 +215,62 @@ public final class QuestionAnsweringEngine {
                 maxScore = score;
                 bestSentence = sentence;
             }
+
+            // Maintain a tiny top-K list for debug logging.
+            maybeInsertTop(top, new Candidate(sentence, score));
         }
 
         log.info("Best match score: {}", maxScore);
+        if (log.isDebugEnabled()) {
+            log.debug("Top {} candidates:", DEBUG_TOP_K);
+            for (int i = 0; i < top.length; i++) {
+                Candidate c = top[i];
+                if (c == null) {
+                    continue;
+                }
+                log.debug("  #{} score={} sentence={}", i + 1, String.format("%.6f", c.score), abbreviate(c.sentence, 220));
+            }
+        }
 
-        // Return best match if score is above threshold
-        return maxScore > 0.1 ? bestSentence : null;
+        return new Candidate(bestSentence, maxScore);
+    }
+
+    private static void maybeInsertTop(Candidate[] top, Candidate candidate) {
+        if (candidate == null || candidate.sentence == null) {
+            return;
+        }
+
+        for (int i = 0; i < top.length; i++) {
+            if (top[i] == null || candidate.score > top[i].score) {
+                // shift down
+                for (int j = top.length - 1; j > i; j--) {
+                    top[j] = top[j - 1];
+                }
+                top[i] = candidate;
+                return;
+            }
+        }
+    }
+
+    private static String abbreviate(String s, int maxLen) {
+        if (s == null) {
+            return null;
+        }
+        String trimmed = s.trim().replaceAll("\\s+", " ");
+        if (trimmed.length() <= maxLen) {
+            return trimmed;
+        }
+        return trimmed.substring(0, Math.max(0, maxLen - 3)) + "...";
+    }
+
+    private static final class Candidate {
+        private final String sentence;
+        private final double score;
+
+        private Candidate(String sentence, double score) {
+            this.sentence = sentence;
+            this.score = score;
+        }
     }
 
     /**

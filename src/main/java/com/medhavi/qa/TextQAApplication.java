@@ -3,11 +3,11 @@ package com.medhavi.qa;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.Scanner;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.medhavi.qa.console.JLineConsole;
 import com.medhavi.qa.engine.QuestionAnsweringEngine;
 import com.medhavi.qa.file.FileFormatHandler;
 import com.medhavi.qa.processor.TextProcessor;
@@ -33,13 +33,16 @@ public class TextQAApplication {
      * @param args Command line arguments (not used)
      */
     public static void main(String[] args) {
-        displayApplicationBanner();
-        
-        try (Scanner scanner = new Scanner(System.in)) {
-            String filePath = getFilePathFromUser(scanner);
+        try (JLineConsole console = new JLineConsole()) {
+            displayApplicationBanner(console);
+            String filePath = getFilePathFromUser(console);
+            if (filePath == null || filePath.isBlank()) {
+                console.println("No file path provided. Exiting.");
+                return;
+            }
             String fileContent = loadAndValidateFile(filePath);
             QuestionAnsweringEngine qaEngine = initializeQAEngine(fileContent);
-            runInteractiveQALoop(scanner, qaEngine);
+            runInteractiveQALoop(console, qaEngine);
         } catch (Exception e) {
             log.error("An error occurred: {}", e.getMessage(), e);
         }
@@ -48,10 +51,12 @@ public class TextQAApplication {
     /**
      * Displays the application banner at startup.
      */
-    private static void displayApplicationBanner() {
-        log.info("═══════════════════════════════════════════════════════");
-        log.info("  Text Question Answering System with DeepLearning4j");
-        log.info("═══════════════════════════════════════════════════════");
+    private static void displayApplicationBanner(JLineConsole console) {
+        // Use raw printing at startup (no prompt active yet).
+        console.rawPrintln("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        console.rawPrintln("  Medhavi Text Question Answering (DeepLearning4j)");
+        console.rawPrintln("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        console.rawPrintln("");
     }
 
     /**
@@ -60,9 +65,8 @@ public class TextQAApplication {
      * @param scanner The Scanner instance for user input
      * @return The file path entered by the user
      */
-    private static String getFilePathFromUser(Scanner scanner) {
-        System.out.print("Enter the path to your text file: ");
-        return scanner.nextLine().trim();
+    private static String getFilePathFromUser(JLineConsole console) {
+        return console.readLine("📄 File path › ");
     }
 
     /**
@@ -133,19 +137,23 @@ public class TextQAApplication {
      * @param scanner The Scanner instance for user input
      * @param qaEngine The QuestionAnsweringEngine instance
      */
-    static void runInteractiveQALoop(Scanner scanner, com.medhavi.qa.engine.QuestionAnsweringEngine qaEngine) {
-        displayQALoopInstructions();
+    static void runInteractiveQALoop(JLineConsole console, com.medhavi.qa.engine.QuestionAnsweringEngine qaEngine) {
+    displayQALoopInstructions(console);
         
         while (true) {
-            String question = getUserQuestion(scanner);
+            String question = getUserQuestion(console);
+            if (question == null) {
+        console.println("Session ended.");
+                break;
+            }
             
             if (isExitCommand(question)) {
-                log.info("Thank you for using the Text QA System!");
+        console.println("Thank you for using Medhavi QA!");
                 break;
             }
             
             if (isValidQuestion(question)) {
-                processAndDisplayAnswer(qaEngine, question);
+                processAndDisplayAnswer(console, qaEngine, question);
             }
         }
     }
@@ -153,9 +161,10 @@ public class TextQAApplication {
     /**
      * Displays instructions for the Q&A loop.
      */
-    private static void displayQALoopInstructions() {
-        log.info("You can now ask questions about the text.");
-        log.info("Type 'exit' or 'quit' to end the session.");
+    private static void displayQALoopInstructions(JLineConsole console) {
+        console.println("✓ Document processed. Ask questions about it.");
+        console.println("Tip: type 'exit' or 'quit' to end.");
+        console.blankLine();
     }
 
     /**
@@ -164,9 +173,8 @@ public class TextQAApplication {
      * @param scanner The Scanner instance for user input
      * @return The question entered by the user
      */
-    private static String getUserQuestion(Scanner scanner) {
-        System.out.print("❓ Your question: ");
-        return scanner.nextLine().trim();
+    private static String getUserQuestion(JLineConsole console) {
+        return console.readLine("❓ Question › ");
     }
 
     /**
@@ -199,10 +207,17 @@ public class TextQAApplication {
      * @param qaEngine The QuestionAnsweringEngine instance
      * @param question The user's question
      */
-    private static void processAndDisplayAnswer(QuestionAnsweringEngine qaEngine, String question) {
+    private static void processAndDisplayAnswer(JLineConsole console, QuestionAnsweringEngine qaEngine, String question) {
         try {
             String answer = qaEngine.answerQuestion(question);
-            log.info("Answer: {}", answer);
+
+            console.blankLine();
+            console.println("Answer:");
+            for (String line : answer.split("\\R")) {
+                console.println(line);
+            }
+            console.blankLine();
+            log.debug("Answer: {}", answer);
         } catch (Exception e) {
             log.error("Error processing question: {}", e.getMessage(), e);
         }
