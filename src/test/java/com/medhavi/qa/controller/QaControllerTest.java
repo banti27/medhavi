@@ -16,29 +16,24 @@ import org.springframework.test.web.servlet.MockMvc;
 @AutoConfigureMockMvc
 class QaControllerTest {
 
-    @Autowired
-    private MockMvc mvc;
+  @Autowired private MockMvc mvc;
 
-    @Test
-    void healthWorks() throws Exception {
-        mvc.perform(get("/api/health"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.ok").value(true));
-    }
+  @Test
+  void healthWorks() throws Exception {
+    mvc.perform(get("/api/health"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.ok").value(true));
+  }
 
-    @Test
-    void askFileWorks() throws Exception {
-        MockMultipartFile file = new MockMultipartFile(
-                "file",
-                "doc.txt",
-                "text/plain",
-                "Java is a programming language.".getBytes());
+  @Test
+  void askFileWorks() throws Exception {
+    MockMultipartFile file =
+        new MockMultipartFile(
+            "file", "doc.txt", "text/plain", "Java is a programming language.".getBytes());
 
-        mvc.perform(multipart("/api/askFile")
-                .file(file)
-                .param("question", "What is Java?"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.answer").exists())
-                .andExpect(jsonPath("$.mode").value("extractive"));
-    }
+    mvc.perform(multipart("/api/askFile").file(file).param("question", "What is Java?"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.answer").exists())
+        .andExpect(jsonPath("$.mode").value("extractive"));
+  }
 }

@@ -2,6 +2,7 @@ plugins {
     id 'java'
     id 'org.springframework.boot' version '3.4.1'
     id 'io.spring.dependency-management' version '1.1.7'
+    id 'com.diffplug.spotless' version '6.25.0'
 }
 
 group = 'com.medhavi'
@@ -61,5 +62,28 @@ dependencies {
 
 tasks.named('test') {
     useJUnitPlatform()
+}
+
+spotless {
+    java {
+        // Use Google Java Format for consistent formatting.
+        // Keep this version pinned for reproducible formatting in CI.
+        googleJavaFormat('1.23.0')
+        // Format all Java sources in this project.
+        target 'src/*/java/**/*.java'
+    }
+}
+
+// Convenience aliases (so you can run ./gradlew format / ./gradlew formatCheck)
+tasks.register('format') {
+    group = 'formatting'
+    description = 'Formats the codebase using google-java-format (via Spotless).'
+    dependsOn 'spotlessApply'
+}
+
+tasks.register('formatCheck') {
+    group = 'verification'
+    description = 'Checks formatting using google-java-format (via Spotless).'
+    dependsOn 'spotlessCheck'
 }
 

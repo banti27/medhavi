@@ -48,6 +48,22 @@ Then open the UI and you should see the backend JSON rendered in the page.
 ./gradlew build
 ```
 
+## Code formatting (google-java-format)
+
+This project uses **google-java-format** via the **Spotless** Gradle plugin.
+
+- Format code:
+
+```bash
+./gradlew format
+```
+
+- Check formatting (useful for CI):
+
+```bash
+./gradlew formatCheck
+```
+
 ### Run (recommended)
 
 ```bash

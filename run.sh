@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# Quick Start Script for Text QA System
+# Quick Start Script for Medhavi REST API (Spring Boot)
 
 echo "╔══════════════════════════════════════════════════════════╗"
-echo "║  Text Question Answering System - Quick Start           ║"
+echo "║  Medhavi REST API (Spring Boot) - Quick Start           ║"
 echo "╚══════════════════════════════════════════════════════════╝"
 echo ""
 
@@ -32,9 +32,8 @@ if [ ! -d "build" ]; then
 fi
 
 # Run the application
-echo "🚀 Starting the Text QA System..."
+echo "🚀 Starting the Medhavi REST API..."
 echo ""
 
-# Use the interactive main (TextQAApplication) for the best CLI experience.
-# `--console=plain` disables Gradle's progress UI which can interfere with JLine.
-./gradlew run --no-daemon --console=plain
+# Start Spring Boot (default port 8080)
+./gradlew bootRun --no-daemon --console=plain

@@ -1,11 +1,10 @@
 package com.medhavi.qa.engine;
 
+import com.medhavi.qa.service.text.DefaultTextProcessingService;
+import com.medhavi.qa.service.text.TextProcessingService;
 import java.io.File;
-import java.util.HashMap;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
-
 import org.deeplearning4j.models.embeddings.loader.WordVectorSerializer;
 import org.deeplearning4j.models.word2vec.Word2Vec;
 import org.deeplearning4j.text.sentenceiterator.CollectionSentenceIterator;
@@ -15,564 +14,546 @@ import org.deeplearning4j.text.tokenization.tokenizerfactory.TokenizerFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.medhavi.qa.processor.TextProcessor;
-
 /**
- * Immutable Question Answering Engine using DeepLearning4j's Word2Vec for
- * semantic similarity.
- * 
- * This class is thread-safe and immutable. All instances must be created
- * through the Builder pattern.
- * Once constructed, the state cannot be modified.
+ * Immutable Question Answering Engine using DeepLearning4j's Word2Vec for semantic similarity.
+ *
+ * <p>This class is thread-safe and immutable. All instances must be created through the Builder
+ * pattern. Once constructed, the state cannot be modified.
  */
 public final class QuestionAnsweringEngine {
 
-    private static final Logger log = LoggerFactory.getLogger(QuestionAnsweringEngine.class);
+  private static final Logger log = LoggerFactory.getLogger(QuestionAnsweringEngine.class);
 
-    /**
-     * Word2Vec model for semantic similarity (immutable)
-     */
-    private final Word2Vec word2Vec;
+  /** Word2Vec model for semantic similarity (immutable) */
+  private final Word2Vec word2Vec;
 
-    /**
-     * List of sentences extracted from the document (immutable)
-     */
-    private final List<String> sentences;
+  /** List of sentences extracted from the document (immutable) */
+  private final List<String> sentences;
 
-    /**
-     * Text processor for document analysis (immutable)
-     */
-    private final TextProcessor textProcessor;
+  /** Text processor for document analysis (immutable) */
+  private final TextProcessingService textProcessor;
 
-    /**
-     * Cache for storing sentences and their embeddings (immutable)
-     */
-    private final Map<String, String> sentenceCache;
+  /** Cache for storing sentences and their embeddings (immutable) */
 
-    /**
-     * How many top candidates to log for debugging.
-     */
-    private static final int DEBUG_TOP_K = 5;
+  /** How many top candidates to log for debugging. */
+  private static final int DEBUG_TOP_K = 5;
 
-    /**
-     * Minimum score to consider an answer "confident".
-     *
-     * Note: The engine will still return the best match even below this threshold,
-     * but it will be marked as low confidence.
-     */
-    private static final double CONFIDENT_SCORE_THRESHOLD = 0.10;
+  /**
+   * Minimum score to consider an answer "confident".
+   *
+   * <p>Note: The engine will still return the best match even below this threshold, but it will be
+   * marked as low confidence.
+   */
+  private static final double CONFIDENT_SCORE_THRESHOLD = 0.10;
 
-    /**
-     * Defaults for chunked retrieval (used for LLM/RAG).
-     */
-    private static final int DEFAULT_CHUNK_WORDS = 220;
-    private static final int DEFAULT_CHUNK_OVERLAP_WORDS = 60;
-    private static final int DEFAULT_TOP_K_CHUNKS = 5;
+  /** Defaults for chunked retrieval (used for LLM/RAG). */
+  private static final int DEFAULT_CHUNK_WORDS = 220;
 
-    /**
-     * Private constructor - use Builder to create instances.
-     * 
-     * @param builder The builder with configuration
-     */
-    private QuestionAnsweringEngine(Builder builder) {
-        this.textProcessor = TextProcessor.builder().build();
+  private static final int DEFAULT_CHUNK_OVERLAP_WORDS = 60;
+  private static final int DEFAULT_TOP_K_CHUNKS = 5;
 
-        // Always process the content to initialize sentences
-        List<String> processedSentences = textProcessor.splitIntoSentences(builder.content);
-        this.sentences = List.copyOf(processedSentences); // Make immutable copy
+  /**
+   * Private constructor - use Builder to create instances.
+   *
+   * @param builder The builder with configuration
+   */
+  private QuestionAnsweringEngine(Builder builder) {
+    this.textProcessor =
+        (builder.textProcessingService != null)
+            ? builder.textProcessingService
+            : new DefaultTextProcessingService();
 
-        // Create immutable sentence cache
-        Map<String, String> tempCache = new HashMap<>();
-        for (int i = 0; i < sentences.size(); i++) {
-            tempCache.put(String.valueOf(i), sentences.get(i));
-        }
-        this.sentenceCache = Map.copyOf(tempCache); // Make immutable
+    // Always process the content to initialize sentences
+    List<String> processedSentences = textProcessor.splitIntoSentences(builder.content);
+    this.sentences = List.copyOf(processedSentences); // Make immutable copy
 
-        log.info("Processed {} sentences from document", sentences.size());
+    log.info("Processed {} sentences from document", sentences.size());
 
-        // Check if model exists and load it, or train a new one
-        this.word2Vec = initializeModel(builder.modelPath);
-    }
+    // Check if model exists and load it, or train a new one
+    this.word2Vec = initializeModel(builder.modelPath);
+  }
 
-    /**
-     * Initializes the Word2Vec model by either loading from disk or training a new
-     * one.
-     * 
-     * @param modelPath Path to the model file
-     * @return Initialized Word2Vec model
-     */
-    private Word2Vec initializeModel(String modelPath) {
-        File modelFile = new File(modelPath);
-        if (modelFile.exists()) {
-            try {
-                Word2Vec model = WordVectorSerializer.readWord2VecModel(modelFile);
-                log.info("✅ Word2Vec model loaded from: {}", modelPath);
-                log.info("   Vocabulary size: {}", model.getVocab().numWords());
-                return model;
-            } catch (Exception e) {
-                log.error("Failed to load model, training new one", e);
-                return trainNewModel(modelPath);
-            }
-        } else {
-            log.info("No saved model found. Training new Word2Vec model...");
-            return trainNewModel(modelPath);
-        }
-    }
-
-    /**
-     * Trains a new Word2Vec model on the processed sentences.
-     * 
-     * @param modelPath Path to save the trained model
-     * @return Trained Word2Vec model
-     */
-    private Word2Vec trainNewModel(String modelPath) {
-        TokenizerFactory tokenizerFactory = new DefaultTokenizerFactory();
-        tokenizerFactory.setTokenPreProcessor(new CommonPreprocessor());
-
-        CollectionSentenceIterator iterator = new CollectionSentenceIterator(sentences);
-
-        log.info("Training Word2Vec model...");
-        Word2Vec model = new Word2Vec.Builder()
-                .minWordFrequency(1) // Include words appearing at least once
-                .iterations(3) // Train for 3 epochs
-                .layerSize(100) // 100-dimensional word vectors
-                .seed(42) // Random seed for reproducibility
-                .windowSize(5) // Context window of 5 words
-                .iterate(iterator) // Feed sentences to model
-                .tokenizerFactory(tokenizerFactory)
-                .build();
-
-        model.fit();
-
-        log.info("✅ Word2Vec model trained successfully");
+  /**
+   * Initializes the Word2Vec model by either loading from disk or training a new one.
+   *
+   * @param modelPath Path to the model file
+   * @return Initialized Word2Vec model
+   */
+  private Word2Vec initializeModel(String modelPath) {
+    File modelFile = new File(modelPath);
+    if (modelFile.exists()) {
+      try {
+        Word2Vec model = WordVectorSerializer.readWord2VecModel(modelFile);
+        log.info("✅ Word2Vec model loaded from: {}", modelPath);
         log.info("   Vocabulary size: {}", model.getVocab().numWords());
-
-        // Save the model
-        saveModel(model, modelPath);
-
         return model;
+      } catch (Exception e) {
+        log.error("Failed to load model, training new one", e);
+        return trainNewModel(modelPath);
+      }
+    } else {
+      log.info("No saved model found. Training new Word2Vec model...");
+      return trainNewModel(modelPath);
+    }
+  }
+
+  /**
+   * Trains a new Word2Vec model on the processed sentences.
+   *
+   * @param modelPath Path to save the trained model
+   * @return Trained Word2Vec model
+   */
+  private Word2Vec trainNewModel(String modelPath) {
+    TokenizerFactory tokenizerFactory = new DefaultTokenizerFactory();
+    tokenizerFactory.setTokenPreProcessor(new CommonPreprocessor());
+
+    CollectionSentenceIterator iterator = new CollectionSentenceIterator(sentences);
+
+    log.info("Training Word2Vec model...");
+    Word2Vec model =
+        new Word2Vec.Builder()
+            .minWordFrequency(1) // Include words appearing at least once
+            .iterations(3) // Train for 3 epochs
+            .layerSize(100) // 100-dimensional word vectors
+            .seed(42) // Random seed for reproducibility
+            .windowSize(5) // Context window of 5 words
+            .iterate(iterator) // Feed sentences to model
+            .tokenizerFactory(tokenizerFactory)
+            .build();
+
+    model.fit();
+
+    log.info("✅ Word2Vec model trained successfully");
+    log.info("   Vocabulary size: {}", model.getVocab().numWords());
+
+    // Save the model
+    saveModel(model, modelPath);
+
+    return model;
+  }
+
+  /**
+   * Answers a question based on the processed document.
+   *
+   * @param question The question to answer
+   * @return The answer (most relevant sentence from the document)
+   */
+  public String answerQuestion(String question) {
+    if (sentences == null || sentences.isEmpty()) {
+      return "No document has been processed yet.";
     }
 
-    /**
-     * Answers a question based on the processed document.
-     * 
-     * @param question The question to answer
-     * @return The answer (most relevant sentence from the document)
-     */
-    public String answerQuestion(String question) {
-        if (sentences == null || sentences.isEmpty()) {
-            return "No document has been processed yet.";
-        }
-
-        if (question == null || question.trim().isEmpty()) {
-            log.warn("Empty question received");
-            return "Please ask a valid question.";
-        }
-
-        Candidate best = findMostRelevantSentence(question);
-        if (best == null || best.sentence == null || best.sentence.isBlank()) {
-            return "I couldn't find a relevant answer in the document. Please try rephrasing your question.";
-        }
-
-        // Always return the best sentence, but mark low-confidence matches.
-        if (best.score >= CONFIDENT_SCORE_THRESHOLD) {
-            return best.sentence;
-        }
-
-        return String.format("(low confidence, score=%.4f) %s", best.score, best.sentence);
+    if (question == null || question.trim().isEmpty()) {
+      log.warn("Empty question received");
+      return "Please ask a valid question.";
     }
 
-    /**
-     * Retrieves top-K relevant chunks and asks the provided LLM to answer using
-     * those chunks.
-     *
-     * Contract:
-     * - Returns a plain-text answer from the LLM.
-     * - If no chunks are found, returns a friendly message (and does not call the
-     * LLM).
-     */
-    public String answerQuestionWithLLM(String question, com.medhavi.qa.llm.LLMClient llmClient) {
-        if (llmClient == null) {
-            throw new IllegalArgumentException("llmClient cannot be null");
-        }
-
-        if (sentences == null || sentences.isEmpty()) {
-            return "No document has been processed yet.";
-        }
-
-        if (question == null || question.trim().isEmpty()) {
-            log.warn("Empty question received");
-            return "Please ask a valid question.";
-        }
-
-        List<ScoredChunk> chunks = findTopRelevantChunks(
-                question,
-                DEFAULT_CHUNK_WORDS,
-                DEFAULT_CHUNK_OVERLAP_WORDS,
-                DEFAULT_TOP_K_CHUNKS);
-
-        if (chunks.isEmpty()) {
-            return "I couldn't find relevant context in the document.";
-        }
-
-        List<String> context = chunks.stream().map(c -> c.text).toList();
-        return llmClient.generateAnswer(question, context);
+    Candidate best = findMostRelevantSentence(question);
+    if (best == null || best.sentence == null || best.sentence.isBlank()) {
+      return "I couldn't find a relevant answer in the document. Please try rephrasing your question.";
     }
 
-    /**
-     * Builds overlapping chunks over the document sentence list and returns the
-     * top-K
-     * chunks by similarity score (Word2Vec + keyword overlap).
-     */
-    public List<String> retrieveTopChunks(String question, int topK) {
-        int k = Math.max(1, topK);
-        return findTopRelevantChunks(question, DEFAULT_CHUNK_WORDS, DEFAULT_CHUNK_OVERLAP_WORDS, k)
-                .stream()
-                .map(c -> c.text)
-                .toList();
+    // Always return the best sentence, but mark low-confidence matches.
+    if (best.score >= CONFIDENT_SCORE_THRESHOLD) {
+      return best.sentence;
     }
 
-    /**
-     * Save the trained Word2Vec model to a file.
-     *
-     * @param model     The Word2Vec model to save
-     * @param modelPath The file path to save the model
-     * @return True if the model was saved successfully, false otherwise
-     */
-    private boolean saveModel(Word2Vec model, String modelPath) {
-        try {
-            File modelFile = new File(modelPath);
-            // Create parent directories if they don't exist
-            modelFile.getParentFile().mkdirs();
+    return String.format("(low confidence, score=%.4f) %s", best.score, best.sentence);
+  }
 
-            WordVectorSerializer.writeWord2VecModel(model, modelFile);
-            log.info("💾 Word2Vec model saved to: {}", modelPath);
-            return true;
-        } catch (Exception e) {
-            log.error("Failed to save Word2Vec model to: {}", modelPath, e);
-            return false;
-        }
+  /**
+   * Retrieves top-K relevant chunks and asks the provided LLM to answer using those chunks.
+   *
+   * <p>Contract: - Returns a plain-text answer from the LLM. - If no chunks are found, returns a
+   * friendly message (and does not call the LLM).
+   */
+  public String answerQuestionWithLLM(
+      String question, com.medhavi.qa.service.llm.LLMClient llmClient) {
+    if (llmClient == null) {
+      throw new IllegalArgumentException("llmClient cannot be null");
     }
 
-    /**
-     * Finds the most relevant sentence to the question using multiple strategies.
-     * 
-     * @param question The question to match
-     * @return The most relevant sentence
-     */
-    private Candidate findMostRelevantSentence(String question) {
-        double maxScore = -1.0;
-        String bestSentence = null;
-
-        // Extract keywords from question
-        List<String> questionKeywords = textProcessor.extractKeywords(question.toLowerCase());
-
-        Candidate[] top = new Candidate[DEBUG_TOP_K];
-
-        for (String sentence : sentences) {
-            double score = calculateSimilarityScore(question, sentence, questionKeywords);
-
-            if (score > maxScore) {
-                maxScore = score;
-                bestSentence = sentence;
-            }
-
-            // Maintain a tiny top-K list for debug logging.
-            maybeInsertTop(top, new Candidate(sentence, score));
-        }
-
-        log.info("Best match score: {}", maxScore);
-        if (log.isDebugEnabled()) {
-            log.debug("Top {} candidates:", DEBUG_TOP_K);
-            for (int i = 0; i < top.length; i++) {
-                Candidate c = top[i];
-                if (c == null) {
-                    continue;
-                }
-                log.debug("  #{} score={} sentence={}", i + 1, String.format("%.6f", c.score),
-                        abbreviate(c.sentence, 220));
-            }
-        }
-
-        return new Candidate(bestSentence, maxScore);
+    if (sentences == null || sentences.isEmpty()) {
+      return "No document has been processed yet.";
     }
 
-    private static final class ScoredChunk {
-        private final String text;
-        private final double score;
-
-        private ScoredChunk(String text, double score) {
-            this.text = text;
-            this.score = score;
-        }
+    if (question == null || question.trim().isEmpty()) {
+      log.warn("Empty question received");
+      return "Please ask a valid question.";
     }
 
-    private List<ScoredChunk> findTopRelevantChunks(String question,
-            int chunkWords,
-            int overlapWords,
-            int topK) {
-        int wordsPerChunk = Math.max(50, chunkWords);
-        int overlap = Math.max(0, Math.min(overlapWords, wordsPerChunk - 1));
-        int k = Math.max(1, topK);
+    List<ScoredChunk> chunks =
+        findTopRelevantChunks(
+            question, DEFAULT_CHUNK_WORDS, DEFAULT_CHUNK_OVERLAP_WORDS, DEFAULT_TOP_K_CHUNKS);
 
-        List<String> questionKeywords = textProcessor.extractKeywords(question.toLowerCase());
-
-        // Build chunks from sentences until we hit word budget.
-        List<String> chunks = new ArrayList<>();
-        List<Integer> chunkStartSentenceIdx = new ArrayList<>();
-
-        int start = 0;
-        while (start < sentences.size()) {
-            int end = start;
-            int wordCount = 0;
-            StringBuilder sb = new StringBuilder();
-
-            while (end < sentences.size()) {
-                String s = sentences.get(end);
-                int w = countWords(s);
-                if (wordCount > 0 && wordCount + w > wordsPerChunk) {
-                    break;
-                }
-                if (sb.length() > 0) {
-                    sb.append(' ');
-                }
-                sb.append(s);
-                wordCount += w;
-                end++;
-            }
-
-            String chunkText = sb.toString().trim();
-            if (!chunkText.isEmpty()) {
-                chunks.add(chunkText);
-                chunkStartSentenceIdx.add(start);
-            }
-
-            if (end <= start) {
-                // Safety to avoid infinite loops.
-                end = start + 1;
-            }
-
-            // Advance with overlap by approximating overlap in sentences.
-            // We do overlap in *words* in config, but overlap-by-sentences is good enough
-            // for now.
-            int stepSentences = Math.max(1, (end - start) / 2);
-            if (overlap > 0) {
-                // If we want more overlap, reduce the step.
-                stepSentences = Math.max(1, (int) Math.round((end - start) * 0.4));
-            }
-            start += stepSentences;
-        }
-
-        // Score chunks, keep top-K.
-        ScoredChunk[] top = new ScoredChunk[Math.min(k, Math.max(1, chunks.size()))];
-
-        for (String chunk : chunks) {
-            double score = calculateSimilarityScore(question, chunk, questionKeywords);
-            maybeInsertTopChunk(top, new ScoredChunk(chunk, score));
-        }
-
-        List<ScoredChunk> result = new ArrayList<>();
-        for (ScoredChunk c : top) {
-            if (c != null) {
-                result.add(c);
-            }
-        }
-
-        if (log.isDebugEnabled()) {
-            log.debug("Top {} chunks:", result.size());
-            for (int i = 0; i < result.size(); i++) {
-                ScoredChunk c = result.get(i);
-                log.debug("  #{} score={} chunk={}", i + 1, String.format("%.6f", c.score), abbreviate(c.text, 260));
-            }
-        }
-
-        return result;
+    if (chunks.isEmpty()) {
+      return "I couldn't find relevant context in the document.";
     }
 
-    private static void maybeInsertTopChunk(ScoredChunk[] top, ScoredChunk candidate) {
-        if (candidate == null || candidate.text == null) {
-            return;
-        }
+    List<String> context = chunks.stream().map(c -> c.text).toList();
+    return llmClient.generateAnswer(question, context);
+  }
 
-        for (int i = 0; i < top.length; i++) {
-            if (top[i] == null || candidate.score > top[i].score) {
-                for (int j = top.length - 1; j > i; j--) {
-                    top[j] = top[j - 1];
-                }
-                top[i] = candidate;
-                return;
-            }
-        }
+  /**
+   * Builds overlapping chunks over the document sentence list and returns the top-K chunks by
+   * similarity score (Word2Vec + keyword overlap).
+   */
+  public List<String> retrieveTopChunks(String question, int topK) {
+    int k = Math.max(1, topK);
+    return findTopRelevantChunks(question, DEFAULT_CHUNK_WORDS, DEFAULT_CHUNK_OVERLAP_WORDS, k)
+        .stream()
+        .map(c -> c.text)
+        .toList();
+  }
+
+  /**
+   * Save the trained Word2Vec model to a file.
+   *
+   * @param model The Word2Vec model to save
+   * @param modelPath The file path to save the model
+   * @return True if the model was saved successfully, false otherwise
+   */
+  private boolean saveModel(Word2Vec model, String modelPath) {
+    try {
+      File modelFile = new File(modelPath);
+      // Create parent directories if they don't exist
+      modelFile.getParentFile().mkdirs();
+
+      WordVectorSerializer.writeWord2VecModel(model, modelFile);
+      log.info("💾 Word2Vec model saved to: {}", modelPath);
+      return true;
+    } catch (Exception e) {
+      log.error("Failed to save Word2Vec model to: {}", modelPath, e);
+      return false;
+    }
+  }
+
+  /**
+   * Finds the most relevant sentence to the question using multiple strategies.
+   *
+   * @param question The question to match
+   * @return The most relevant sentence
+   */
+  private Candidate findMostRelevantSentence(String question) {
+    double maxScore = -1.0;
+    String bestSentence = null;
+
+    // Extract keywords from question
+    List<String> questionKeywords = textProcessor.extractKeywords(question.toLowerCase());
+
+    Candidate[] top = new Candidate[DEBUG_TOP_K];
+
+    for (String sentence : sentences) {
+      double score = calculateSimilarityScore(question, sentence, questionKeywords);
+
+      if (score > maxScore) {
+        maxScore = score;
+        bestSentence = sentence;
+      }
+
+      // Maintain a tiny top-K list for debug logging.
+      maybeInsertTop(top, new Candidate(sentence, score));
     }
 
-    private static int countWords(String s) {
-        if (s == null) {
-            return 0;
+    log.info("Best match score: {}", maxScore);
+    if (log.isDebugEnabled()) {
+      log.debug("Top {} candidates:", DEBUG_TOP_K);
+      for (int i = 0; i < top.length; i++) {
+        Candidate c = top[i];
+        if (c == null) {
+          continue;
         }
-        String trimmed = s.trim();
-        if (trimmed.isEmpty()) {
-            return 0;
-        }
-        return trimmed.split("\\s+").length;
+        log.debug(
+            "  #{} score={} sentence={}",
+            i + 1,
+            String.format("%.6f", c.score),
+            abbreviate(c.sentence, 220));
+      }
     }
 
-    private static void maybeInsertTop(Candidate[] top, Candidate candidate) {
-        if (candidate == null || candidate.sentence == null) {
-            return;
-        }
+    return new Candidate(bestSentence, maxScore);
+  }
 
-        for (int i = 0; i < top.length; i++) {
-            if (top[i] == null || candidate.score > top[i].score) {
-                // shift down
-                for (int j = top.length - 1; j > i; j--) {
-                    top[j] = top[j - 1];
-                }
-                top[i] = candidate;
-                return;
-            }
+  private static final class ScoredChunk {
+    private final String text;
+    private final double score;
+
+    private ScoredChunk(String text, double score) {
+      this.text = text;
+      this.score = score;
+    }
+  }
+
+  private List<ScoredChunk> findTopRelevantChunks(
+      String question, int chunkWords, int overlapWords, int topK) {
+    int wordsPerChunk = Math.max(50, chunkWords);
+    int overlap = Math.max(0, Math.min(overlapWords, wordsPerChunk - 1));
+    int k = Math.max(1, topK);
+
+    List<String> questionKeywords = textProcessor.extractKeywords(question.toLowerCase());
+
+    // Build chunks from sentences until we hit word budget.
+    List<String> chunks = new ArrayList<>();
+    List<Integer> chunkStartSentenceIdx = new ArrayList<>();
+
+    int start = 0;
+    while (start < sentences.size()) {
+      int end = start;
+      int wordCount = 0;
+      StringBuilder sb = new StringBuilder();
+
+      while (end < sentences.size()) {
+        String s = sentences.get(end);
+        int w = countWords(s);
+        if (wordCount > 0 && wordCount + w > wordsPerChunk) {
+          break;
         }
+        if (sb.length() > 0) {
+          sb.append(' ');
+        }
+        sb.append(s);
+        wordCount += w;
+        end++;
+      }
+
+      String chunkText = sb.toString().trim();
+      if (!chunkText.isEmpty()) {
+        chunks.add(chunkText);
+        chunkStartSentenceIdx.add(start);
+      }
+
+      if (end <= start) {
+        // Safety to avoid infinite loops.
+        end = start + 1;
+      }
+
+      // Advance with overlap by approximating overlap in sentences.
+      // We do overlap in *words* in config, but overlap-by-sentences is good enough
+      // for now.
+      int stepSentences = Math.max(1, (end - start) / 2);
+      if (overlap > 0) {
+        // If we want more overlap, reduce the step.
+        stepSentences = Math.max(1, (int) Math.round((end - start) * 0.4));
+      }
+      start += stepSentences;
     }
 
-    private static String abbreviate(String s, int maxLen) {
-        if (s == null) {
-            return null;
-        }
-        String trimmed = s.trim().replaceAll("\\s+", " ");
-        if (trimmed.length() <= maxLen) {
-            return trimmed;
-        }
-        return trimmed.substring(0, Math.max(0, maxLen - 3)) + "...";
+    // Score chunks, keep top-K.
+    ScoredChunk[] top = new ScoredChunk[Math.min(k, Math.max(1, chunks.size()))];
+
+    for (String chunk : chunks) {
+      double score = calculateSimilarityScore(question, chunk, questionKeywords);
+      maybeInsertTopChunk(top, new ScoredChunk(chunk, score));
     }
 
-    private static final class Candidate {
-        private final String sentence;
-        private final double score;
+    List<ScoredChunk> result = new ArrayList<>();
+    for (ScoredChunk c : top) {
+      if (c != null) {
+        result.add(c);
+      }
+    }
 
-        private Candidate(String sentence, double score) {
-            this.sentence = sentence;
-            this.score = score;
+    if (log.isDebugEnabled()) {
+      log.debug("Top {} chunks:", result.size());
+      for (int i = 0; i < result.size(); i++) {
+        ScoredChunk c = result.get(i);
+        log.debug(
+            "  #{} score={} chunk={}",
+            i + 1,
+            String.format("%.6f", c.score),
+            abbreviate(c.text, 260));
+      }
+    }
+
+    return result;
+  }
+
+  private static void maybeInsertTopChunk(ScoredChunk[] top, ScoredChunk candidate) {
+    if (candidate == null || candidate.text == null) {
+      return;
+    }
+
+    for (int i = 0; i < top.length; i++) {
+      if (top[i] == null || candidate.score > top[i].score) {
+        for (int j = top.length - 1; j > i; j--) {
+          top[j] = top[j - 1];
         }
+        top[i] = candidate;
+        return;
+      }
+    }
+  }
+
+  private static int countWords(String s) {
+    if (s == null) {
+      return 0;
+    }
+    String trimmed = s.trim();
+    if (trimmed.isEmpty()) {
+      return 0;
+    }
+    return trimmed.split("\\s+").length;
+  }
+
+  private static void maybeInsertTop(Candidate[] top, Candidate candidate) {
+    if (candidate == null || candidate.sentence == null) {
+      return;
     }
 
-    /**
-     * Calculates similarity score between question and sentence.
-     * Combines Word2Vec semantic similarity with keyword matching.
-     * 
-     * @param question         The question
-     * @param sentence         The sentence to compare
-     * @param questionKeywords Keywords extracted from the question
-     * @return Similarity score
-     */
-    private double calculateSimilarityScore(String question, String sentence,
-            List<String> questionKeywords) {
-        double semanticScore = calculateSemanticSimilarity(question, sentence);
-        double keywordScore = calculateKeywordOverlap(questionKeywords, sentence);
-
-        // Weighted combination of scores
-        return (0.6 * semanticScore) + (0.4 * keywordScore);
-    }
-
-    /**
-     * Calculates semantic similarity using Word2Vec.
-     * 
-     * @param question The question
-     * @param sentence The sentence
-     * @return Semantic similarity score (0-1)
-     */
-    private double calculateSemanticSimilarity(String question, String sentence) {
-        try {
-            // Tokenize and get words that exist in vocabulary
-            String[] questionWords = question.toLowerCase().split("\\W+");
-            String[] sentenceWords = sentence.toLowerCase().split("\\W+");
-
-            double totalSimilarity = 0.0;
-            int comparisons = 0;
-
-            for (String qWord : questionWords) {
-                if (qWord.length() < 2 || !word2Vec.hasWord(qWord))
-                    continue;
-
-                for (String sWord : sentenceWords) {
-                    if (sWord.length() < 2 || !word2Vec.hasWord(sWord))
-                        continue;
-
-                    double similarity = word2Vec.similarity(qWord, sWord);
-                    if (!Double.isNaN(similarity)) {
-                        totalSimilarity += similarity;
-                        comparisons++;
-                    }
-                }
-            }
-
-            return comparisons > 0 ? totalSimilarity / comparisons : 0.0;
-        } catch (Exception e) {
-            log.error("Error calculating semantic similarity", e);
-            return 0.0;
+    for (int i = 0; i < top.length; i++) {
+      if (top[i] == null || candidate.score > top[i].score) {
+        // shift down
+        for (int j = top.length - 1; j > i; j--) {
+          top[j] = top[j - 1];
         }
+        top[i] = candidate;
+        return;
+      }
     }
+  }
 
-    /**
-     * Calculates keyword overlap score.
-     * 
-     * @param questionKeywords Keywords from the question
-     * @param sentence         The sentence to check
-     * @return Keyword overlap score (0-1)
-     */
-    private double calculateKeywordOverlap(List<String> questionKeywords, String sentence) {
-        if (questionKeywords.isEmpty())
-            return 0.0;
-
-        String lowerSentence = sentence.toLowerCase();
-        long matchCount = questionKeywords.stream()
-                .filter(lowerSentence::contains)
-                .count();
-
-        return (double) matchCount / questionKeywords.size();
+  private static String abbreviate(String s, int maxLen) {
+    if (s == null) {
+      return null;
     }
+    String trimmed = s.trim().replaceAll("\\s+", " ");
+    if (trimmed.length() <= maxLen) {
+      return trimmed;
+    }
+    return trimmed.substring(0, Math.max(0, maxLen - 3)) + "...";
+  }
 
-    /**
-     * Gets statistics about the processed document.
-     * 
-     * @return Statistics string
-     */
-    public String getDocumentStats() {
-        if (sentences == null) {
-            return "No document processed.";
+  private static final class Candidate {
+    private final String sentence;
+    private final double score;
+
+    private Candidate(String sentence, double score) {
+      this.sentence = sentence;
+      this.score = score;
+    }
+  }
+
+  /**
+   * Calculates similarity score between question and sentence. Combines Word2Vec semantic
+   * similarity with keyword matching.
+   *
+   * @param question The question
+   * @param sentence The sentence to compare
+   * @param questionKeywords Keywords extracted from the question
+   * @return Similarity score
+   */
+  private double calculateSimilarityScore(
+      String question, String sentence, List<String> questionKeywords) {
+    double semanticScore = calculateSemanticSimilarity(question, sentence);
+    double keywordScore = calculateKeywordOverlap(questionKeywords, sentence);
+
+    // Weighted combination of scores
+    return (0.6 * semanticScore) + (0.4 * keywordScore);
+  }
+
+  /**
+   * Calculates semantic similarity using Word2Vec.
+   *
+   * @param question The question
+   * @param sentence The sentence
+   * @return Semantic similarity score (0-1)
+   */
+  private double calculateSemanticSimilarity(String question, String sentence) {
+    try {
+      // Tokenize and get words that exist in vocabulary
+      String[] questionWords = question.toLowerCase().split("\\W+");
+      String[] sentenceWords = sentence.toLowerCase().split("\\W+");
+
+      double totalSimilarity = 0.0;
+      int comparisons = 0;
+
+      for (String qWord : questionWords) {
+        if (qWord.length() < 2 || !word2Vec.hasWord(qWord)) continue;
+
+        for (String sWord : sentenceWords) {
+          if (sWord.length() < 2 || !word2Vec.hasWord(sWord)) continue;
+
+          double similarity = word2Vec.similarity(qWord, sWord);
+          if (!Double.isNaN(similarity)) {
+            totalSimilarity += similarity;
+            comparisons++;
+          }
         }
+      }
 
-        return String.format(
-                "Document Statistics:\n" +
-                        "  - Total sentences: %d\n" +
-                        "  - Vocabulary size: %d\n" +
-                        "  - Model trained: %s",
-                sentences.size(),
-                word2Vec != null ? word2Vec.getVocab().numWords() : 0,
-                word2Vec != null ? "Yes" : "No");
+      return comparisons > 0 ? totalSimilarity / comparisons : 0.0;
+    } catch (Exception e) {
+      log.error("Error calculating semantic similarity", e);
+      return 0.0;
+    }
+  }
+
+  /**
+   * Calculates keyword overlap score.
+   *
+   * @param questionKeywords Keywords from the question
+   * @param sentence The sentence to check
+   * @return Keyword overlap score (0-1)
+   */
+  private double calculateKeywordOverlap(List<String> questionKeywords, String sentence) {
+    if (questionKeywords.isEmpty()) return 0.0;
+
+    String lowerSentence = sentence.toLowerCase();
+    long matchCount = questionKeywords.stream().filter(lowerSentence::contains).count();
+
+    return (double) matchCount / questionKeywords.size();
+  }
+
+  /**
+   * Gets statistics about the processed document.
+   *
+   * @return Statistics string
+   */
+  public String getDocumentStats() {
+    if (sentences == null) {
+      return "No document processed.";
     }
 
-    public static Builder builder() {
-        return new Builder();
+    return String.format(
+        "Document Statistics:\n"
+            + "  - Total sentences: %d\n"
+            + "  - Vocabulary size: %d\n"
+            + "  - Model trained: %s",
+        sentences.size(),
+        word2Vec != null ? word2Vec.getVocab().numWords() : 0,
+        word2Vec != null ? "Yes" : "No");
+  }
+
+  public static Builder builder() {
+    return new Builder();
+  }
+
+  public static class Builder {
+    private TextProcessingService textProcessingService;
+    private String content;
+    private String modelPath = "cache/trained/text/model.bin";
+
+    public Builder content(String content) {
+      this.content = content;
+      return this;
     }
 
-    public static class Builder {
-        private String content;
-        private String modelPath = "cache/trained/text/model.bin";
-
-        public Builder content(String content) {
-            this.content = content;
-            return this;
-        }
-
-        public Builder modelPath(String modelPath) {
-            this.modelPath = modelPath;
-            return this;
-        }
-
-        public QuestionAnsweringEngine build() {
-            if (content == null || content.trim().isEmpty()) {
-                throw new IllegalArgumentException("Content cannot be null or empty");
-            }
-            return new QuestionAnsweringEngine(this);
-        }
+    /** Inject a custom text processing implementation. */
+    public Builder textProcessingService(TextProcessingService textProcessingService) {
+      this.textProcessingService = textProcessingService;
+      return this;
     }
+
+    public Builder modelPath(String modelPath) {
+      this.modelPath = modelPath;
+      return this;
+    }
+
+    public QuestionAnsweringEngine build() {
+      if (content == null || content.trim().isEmpty()) {
+        throw new IllegalArgumentException("Content cannot be null or empty");
+      }
+      return new QuestionAnsweringEngine(this);
+    }
+  }
 }
