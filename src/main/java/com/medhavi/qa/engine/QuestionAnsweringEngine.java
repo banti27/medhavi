@@ -18,9 +18,11 @@ import org.slf4j.LoggerFactory;
 import com.medhavi.qa.processor.TextProcessor;
 
 /**
- * Immutable Question Answering Engine using DeepLearning4j's Word2Vec for semantic similarity.
+ * Immutable Question Answering Engine using DeepLearning4j's Word2Vec for
+ * semantic similarity.
  * 
- * This class is thread-safe and immutable. All instances must be created through the Builder pattern.
+ * This class is thread-safe and immutable. All instances must be created
+ * through the Builder pattern.
  * Once constructed, the state cannot be modified.
  */
 public final class QuestionAnsweringEngine {
@@ -74,18 +76,18 @@ public final class QuestionAnsweringEngine {
      */
     private QuestionAnsweringEngine(Builder builder) {
         this.textProcessor = TextProcessor.builder().build();
-        
+
         // Always process the content to initialize sentences
         List<String> processedSentences = textProcessor.splitIntoSentences(builder.content);
-        this.sentences = List.copyOf(processedSentences);  // Make immutable copy
-        
+        this.sentences = List.copyOf(processedSentences); // Make immutable copy
+
         // Create immutable sentence cache
         Map<String, String> tempCache = new HashMap<>();
         for (int i = 0; i < sentences.size(); i++) {
             tempCache.put(String.valueOf(i), sentences.get(i));
         }
-        this.sentenceCache = Map.copyOf(tempCache);  // Make immutable
-        
+        this.sentenceCache = Map.copyOf(tempCache); // Make immutable
+
         log.info("Processed {} sentences from document", sentences.size());
 
         // Check if model exists and load it, or train a new one
@@ -93,7 +95,8 @@ public final class QuestionAnsweringEngine {
     }
 
     /**
-     * Initializes the Word2Vec model by either loading from disk or training a new one.
+     * Initializes the Word2Vec model by either loading from disk or training a new
+     * one.
      * 
      * @param modelPath Path to the model file
      * @return Initialized Word2Vec model
@@ -180,11 +183,13 @@ public final class QuestionAnsweringEngine {
     }
 
     /**
-     * Retrieves top-K relevant chunks and asks the provided LLM to answer using those chunks.
+     * Retrieves top-K relevant chunks and asks the provided LLM to answer using
+     * those chunks.
      *
      * Contract:
      * - Returns a plain-text answer from the LLM.
-     * - If no chunks are found, returns a friendly message (and does not call the LLM).
+     * - If no chunks are found, returns a friendly message (and does not call the
+     * LLM).
      */
     public String answerQuestionWithLLM(String question, com.medhavi.qa.llm.LLMClient llmClient) {
         if (llmClient == null) {
@@ -215,7 +220,8 @@ public final class QuestionAnsweringEngine {
     }
 
     /**
-     * Builds overlapping chunks over the document sentence list and returns the top-K
+     * Builds overlapping chunks over the document sentence list and returns the
+     * top-K
      * chunks by similarity score (Word2Vec + keyword overlap).
      */
     public List<String> retrieveTopChunks(String question, int topK) {
@@ -283,7 +289,8 @@ public final class QuestionAnsweringEngine {
                 if (c == null) {
                     continue;
                 }
-                log.debug("  #{} score={} sentence={}", i + 1, String.format("%.6f", c.score), abbreviate(c.sentence, 220));
+                log.debug("  #{} score={} sentence={}", i + 1, String.format("%.6f", c.score),
+                        abbreviate(c.sentence, 220));
             }
         }
 
@@ -300,7 +307,10 @@ public final class QuestionAnsweringEngine {
         }
     }
 
-    private List<ScoredChunk> findTopRelevantChunks(String question, int chunkWords, int overlapWords, int topK) {
+    private List<ScoredChunk> findTopRelevantChunks(String question,
+            int chunkWords,
+            int overlapWords,
+            int topK) {
         int wordsPerChunk = Math.max(50, chunkWords);
         int overlap = Math.max(0, Math.min(overlapWords, wordsPerChunk - 1));
         int k = Math.max(1, topK);
@@ -343,7 +353,8 @@ public final class QuestionAnsweringEngine {
             }
 
             // Advance with overlap by approximating overlap in sentences.
-            // We do overlap in *words* in config, but overlap-by-sentences is good enough for now.
+            // We do overlap in *words* in config, but overlap-by-sentences is good enough
+            // for now.
             int stepSentences = Math.max(1, (end - start) / 2);
             if (overlap > 0) {
                 // If we want more overlap, reduce the step.

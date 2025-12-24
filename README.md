@@ -18,6 +18,30 @@ Medhavi is a Java 21 CLI application that answers questions about **TXT and PDF*
 
 ## Quick start
 
+## React UI <-> HTTP backend integration
+
+This repo also contains a React UI in `../medhavi-ui/`.
+
+The Java project now has an HTTP entrypoint (`com.medhavi.qa.http.HttpServerApplication`) that exposes:
+
+- `GET /api/health` - JSON health response
+
+### Run backend (HTTP)
+
+- Default port: `8080` (override with `HTTP_PORT`)
+- Default CORS origin: `http://localhost:5173` (override with `CORS_ORIGIN`)
+
+### Run frontend (React)
+
+The Vite dev server proxies `/api/*` to `http://localhost:8080`, so the UI can call `/api/health` without hardcoding a backend URL.
+
+### Typical dev flow
+
+1. Start backend: `./gradlew run`
+2. Start frontend: `npm run dev`
+
+Then open the UI and you should see the backend JSON rendered in the page.
+
 ### Build
 
 ```bash
